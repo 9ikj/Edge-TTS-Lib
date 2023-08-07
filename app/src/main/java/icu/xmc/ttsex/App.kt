@@ -14,8 +14,6 @@ class App:Application() {
         if (voiceItem != null) {
             TTS.getInstance().initialize(this, voiceItem)
         }
-        if (BuildConfig.DEBUG){
-            Timber.plant()
-        }
+        Timber.plant(Timber.DebugTree())
     }
 }

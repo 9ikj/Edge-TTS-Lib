@@ -1,62 +1,77 @@
 package icu.xmc.edgettslib;
 
-import android.util.Log;
-
-import org.java_websocket.client.WebSocketClient;
-import org.java_websocket.handshake.ServerHandshake;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.Map;
 
-public class TTSWebsocket extends WebSocketClient {
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
+import okio.ByteString;
+import timber.log.Timber;
+
+public class TTSWebSocketListener extends WebSocketListener {
+
+    private static final byte[] head = new byte[]{0x50, 0x61, 0x74, 0x68, 0x3a, 0x61, 0x75, 0x64, 0x69, 0x6f, 0x0d, 0x0a};
 
     private String storage;
     private String fileName;
     private Boolean findHeadHook;
 
-    public TTSWebsocket(String serverUri, Map<String, String> httpHeaders, String storage, String fileName, Boolean findHeadHook) throws URISyntaxException {
-        super(new URI(serverUri), httpHeaders);
+    public TTSWebSocketListener(String storage, String fileName, Boolean findHeadHook) {
         this.storage = storage;
         this.fileName = fileName;
         this.findHeadHook = findHeadHook;
     }
 
     @Override
-    public void onOpen(ServerHandshake handshakedata) {
-
+    public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
+        super.onClosed(webSocket, code, reason);
+        Timber.d("TTSWebSocket onClosed");
     }
 
     @Override
-    public void onMessage(String message) {
-        if (message.contains("Path:turn.end")) {
-            close();
+    public void onClosing(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
+        super.onClosing(webSocket, code, reason);
+    }
+
+    @Override
+    public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
+        Timber.d("TTSWebSocket onFailure");
+    }
+
+    @Override
+    public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
+        Timber.d("TTSWebSocket onMessage String");
+        if (text.contains("Path:turn.end")) {
+            webSocket.close(1000,null);
         }
     }
 
-
     @Override
-    public void onMessage(ByteBuffer originBytes) {
+    public void onMessage(@NonNull WebSocket webSocket, @NonNull ByteString bytes) {
+        Timber.d("TTSWebSocket onMessage ByteString");
         if (findHeadHook) {
-            findHeadHook(originBytes);
+            findHeadHook(bytes.toByteArray());
         } else {
-            fixHeadHook(originBytes);
+            fixHeadHook(bytes.toByteArray());
         }
     }
 
-    private static final byte[] head = new byte[]{0x50, 0x61, 0x74, 0x68, 0x3a, 0x61, 0x75, 0x64, 0x69, 0x6f, 0x0d, 0x0a};
+    @Override
+    public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
+        Timber.d("TTSWebSocket onOpen");
+    }
 
     /**
      * This implementation method is more generic as it searches for the file header marker in the given file header and removes it. However, it may have lower efficiency.
      *
-     * @param originBytes
+     * @param origin
      */
-    private void findHeadHook(ByteBuffer originBytes) {
-        byte[] origin = originBytes.array();
+    private void findHeadHook(byte[] origin) {
         int headIndex = -1;
         for (int i = 0; i < origin.length - head.length; i++) {
             boolean match = true;
@@ -86,11 +101,10 @@ public class TTSWebsocket extends WebSocketClient {
     /**
      * This method directly specifies the file header marker, which makes it faster. However, if the format changes, it may become unusable.
      *
-     * @param originBytes
+     * @param origin
      */
-    public void fixHeadHook(ByteBuffer originBytes) {
-        String str = new String(originBytes.array());
-        byte[] origin = originBytes.array();
+    public void fixHeadHook(byte[] origin) {
+        String str = new String(origin);
         int skip;
         if (str.contains("Content-Type")) {
             if (str.contains("audio/mpeg")) {
@@ -110,15 +124,5 @@ public class TTSWebsocket extends WebSocketClient {
         } catch (Exception ex) {
             ex.printStackTrace();
         }
-    }
-
-    @Override
-    public void onClose(int code, String reason, boolean remote) {
-        Log.e("TTSWebsocket", "onClose=>code=" + code + ",reason=" + reason + ",remote=" + remote);
-    }
-
-    @Override
-    public void onError(Exception ex) {
-        ex.printStackTrace();
     }
 }

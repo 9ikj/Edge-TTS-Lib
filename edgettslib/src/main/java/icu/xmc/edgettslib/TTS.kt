@@ -6,11 +6,16 @@ import icu.xmc.edgettslib.entity.VoiceItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import okhttp3.Headers.Companion.toHeaders
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.WebSocket
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 
 class TTS private constructor(){
@@ -42,6 +47,16 @@ class TTS private constructor(){
     private var storage = ""
     private var mediaPlayer: MediaPlayer? = null
     private var lastPlayMp3:File ?= null
+
+    private var request:Request? =null
+
+    private val okHttpClient by lazy {
+        OkHttpClient.Builder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
 
     fun initialize(context: Context,voice:VoiceItem){
         this.voice = voice
@@ -126,39 +141,37 @@ class TTS private constructor(){
         var fileName = reqId
         if (format == "audio-24khz-48kbitrate-mono-mp3") {
             fileName += ".mp3"
-        }
-        else if (format == "webm-24khz-16bit-mono-opus") {
+        } else if (format == "webm-24khz-16bit-mono-opus") {
             fileName += ".opus"
         }
         val storageFile = File(storage)
         if (!storageFile.exists()){
             storageFile.mkdirs()
         }
+        if (request == null){
+            request = Request.Builder()
+                .url(UrlConstant.EDGE_URL)
+                .headers(headers!!.toHeaders())
+                .build()
+        }
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val client = TTSWebsocket(
-                    UrlConstant.EDGE_URL, headers!!, storage,
-                    fileName, findHeadHook
-                )
-                client.connect()
-                while (!client.isOpen) {
-                    // wait open
-                    Thread.sleep(100)
-                }
+                val client =
+                    okHttpClient.newWebSocket(request!!, object : TTSWebSocketListener(storage, fileName, findHeadHook) {
+                        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                            val file = File(storage,fileName)
+                            if (file.exists()){
+                                mediaPlayer?.reset()
+                                mediaPlayer?.setDataSource(file.absolutePath)
+                                mediaPlayer?.prepare()
+                                mediaPlayer?.start()
+                            }
+                        }
+
+                    })
                 client.send(audioFormat)
                 client.send(ssmlHeadersPlusData)
-                while (client.isOpen) {
-                    // wait close
-                }
-                val file = File(storage,fileName)
-                if (file.exists()){
-                    mediaPlayer?.reset()
-                    mediaPlayer?.setDataSource(file.absolutePath)
-                    mediaPlayer?.prepare()
-                    mediaPlayer?.start()
-                }
-                lastPlayMp3 = file
-            } catch (e:Throwable){
+            }catch (e:Throwable){
                 e.printStackTrace()
             }
         }
